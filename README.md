@@ -28,3 +28,12 @@ To compile to a static linked library. Clone the source and compile it with foll
 ```
 cargo build --features ffi --release
 ```
+
+Exported function has following signature:
+```
+pub extern "C" fn signature_with_wif(
+        message: *const c_char,
+        wif: *const c_char,
+    ) -> *const c_char
+```
+
