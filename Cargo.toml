@@ -1,6 +1,6 @@
 [package]
 name = "bip322-simple"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Simple bitcoin message signer for nested segwit wallets"
 license = "CC0-1.0"
