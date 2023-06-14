@@ -140,7 +140,7 @@ mod ffi {
         let ret_val =
             simple_signature_with_wif(message_c_str.to_str().unwrap(), wif_c_str.to_str().unwrap());
         let ret_val_c_string = CString::new(ret_val).unwrap();
-        ret_val_c_string.as_ptr()
+        ret_val_c_string.into_raw()
     }
 }
 #[cfg(test)]
