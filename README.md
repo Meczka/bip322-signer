@@ -10,3 +10,13 @@ simple_signature_with_wif(message: &str, wif: &str) -> &str
 
 Currently only Nested Segwit addresses are supported. Support for other address types will be added if there will be need for them.
 
+
+## Installation
+
+Add crate to dependencies
+
+```
+  [dependencies]
+  bip322-simple = "0.1.0"
+```
+    
