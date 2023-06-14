@@ -19,4 +19,12 @@ Add crate to dependencies
   [dependencies]
   bip322-simple = "0.1.0"
 ```
-    
+
+
+## FFI
+
+To compile to a static linked library. Clone the source and compile it with following command:
+
+```
+cargo build --features ffi --release
+```

@@ -120,6 +120,29 @@ pub fn simple_signature_with_wif(message: &str, wif: &str) -> String {
     let to_sign = create_to_sign_empty(txid, &wallet);
     get_base64_signature(to_sign, &wallet, &secp)
 }
+#[cfg(feature = "ffi")]
+mod ffi {
+
+    use std::ffi::{CStr, CString};
+
+    use libc::c_char;
+
+    use crate::simple_signature_with_wif;
+
+    #[no_mangle]
+    pub extern "C" fn signature_with_wif(
+        message: *const c_char,
+        wif: *const c_char,
+    ) -> *const c_char {
+        let message_c_str = unsafe { CStr::from_ptr(message) };
+        let wif_c_str = unsafe { CStr::from_ptr(wif) };
+
+        let ret_val =
+            simple_signature_with_wif(message_c_str.to_str().unwrap(), wif_c_str.to_str().unwrap());
+        let ret_val_c_string = CString::new(ret_val).unwrap();
+        ret_val_c_string.as_ptr()
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
