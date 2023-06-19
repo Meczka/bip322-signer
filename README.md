@@ -1,7 +1,9 @@
 
 # Bitcoin Bip322 Signer
 
-This tool is aiming to simplify message signing process on bitcoin. Simply pass private key in WIF format and message:
+This tool is aiming to simplify message signing process on bitcoin. This was tested on subber.
+
+ Simply pass private key in WIF format and message:
 ```
 simple_signature_with_wif_segwit(message: &str, wif: &str) -> &str
 simple_signature_with_wif_taproot(message: &str, wif: &str) -> &str
@@ -18,7 +20,7 @@ Add crate to dependencies
 
 ```
   [dependencies]
-  bip322-simple = "0.3.0"
+  bip322-simple = "0.3.1"
 ```
 
 
