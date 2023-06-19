@@ -18,7 +18,7 @@ Add crate to dependencies
 
 ```
   [dependencies]
-  bip322-simple = "0.2.0"
+  bip322-simple = "0.3.0"
 ```
 
 
