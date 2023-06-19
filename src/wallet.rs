@@ -9,11 +9,19 @@ pub struct Wallet {
     pub private_key: PrivateKey,
     pub desc: Descriptor<PublicKey>,
 }
+pub enum WalletType {
+    NativeSegwit,
+    Taproot,
+}
 impl Wallet {
-    pub fn new<C: Signing>(wif: &str, secp: &Secp256k1<C>) -> Self {
+    pub fn new<C: Signing>(wif: &str, wallet_type: WalletType, secp: &Secp256k1<C>) -> Self {
         let private_key = PrivateKey::from_wif(wif).unwrap();
         let pubkey = private_key.public_key(secp);
-        let desc = Descriptor::new_wpkh(pubkey).unwrap();
+        let desc = match wallet_type {
+            WalletType::NativeSegwit => Descriptor::new_wpkh(pubkey).unwrap(),
+            WalletType::Taproot => Descriptor::new_tr(pubkey, None).unwrap(),
+        };
+
         Self {
             pubkey,
             private_key,

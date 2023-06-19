@@ -4,9 +4,12 @@ pub mod wallet;
 use base64::{engine::general_purpose, Engine};
 use bitcoin::{
     absolute, ecdsa,
-    psbt::{PartiallySignedTransaction, SignError},
-    secp256k1::{Message, Secp256k1, Signing},
-    sighash::{EcdsaSighashType, SighashCache},
+    hashes::Hash,
+    key::TapTweak,
+    psbt::{self, PartiallySignedTransaction, SignError},
+    secp256k1::{self, Message, Secp256k1, Signing, Verification, XOnlyPublicKey},
+    sighash::{self, EcdsaSighashType, SighashCache, TapSighash, TapSighashType},
+    taproot::TapLeafHash,
     OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Witness,
 };
 use wallet::Wallet;
@@ -25,7 +28,6 @@ fn create_to_spend(message: &str, wallet: &Wallet) -> Txid {
     let mut script_sig = Vec::new();
     script_sig.extend(hex::decode("0020").unwrap());
     script_sig.extend(result);
-
     //Tx ins
     let ins = vec![TxIn {
         previous_output: OutPoint {
@@ -104,6 +106,35 @@ fn get_base64_signature<C: Signing>(
     let result: Vec<u8> = witness_to_vec(witness);
     general_purpose::STANDARD.encode(result)
 }
+fn get_base64_signature_taproot<C: Signing + Verification>(
+    to_sign_empty: &mut PartiallySignedTransaction,
+    wallet: &Wallet,
+    secp: &Secp256k1<C>,
+) -> String {
+    let x_only_pubkey = XOnlyPublicKey::from_slice(&wallet.pubkey.to_bytes()[1..]).unwrap();
+    to_sign_empty.inputs[0].tap_internal_key = Some(x_only_pubkey);
+    let binding = to_sign_empty.unsigned_tx.clone();
+    let cache = SighashCache::new(&binding)
+        .taproot_signature_hash(
+            0,
+            &sighash::Prevouts::All(&[TxOut {
+                value: 0,
+                script_pubkey: wallet.desc.script_pubkey(),
+            }]),
+            None,
+            None,
+            TapSighashType::Default,
+        )
+        .unwrap();
+
+    sign_psbt_taproot(
+        &wallet.private_key.inner,
+        None,
+        &mut to_sign_empty.inputs[0],
+        cache,
+        secp,
+    )
+}
 fn witness_to_vec(witness: Vec<Vec<u8>>) -> Vec<u8> {
     let mut ret_val: Vec<u8> = Vec::new();
     ret_val.push(witness.len() as u8);
@@ -113,12 +144,44 @@ fn witness_to_vec(witness: Vec<Vec<u8>>) -> Vec<u8> {
     }
     ret_val
 }
-pub fn simple_signature_with_wif(message: &str, wif: &str) -> String {
+
+//All in one functions
+pub fn simple_signature_with_wif_segwit(message: &str, wif: &str) -> String {
     let secp = Secp256k1::new();
-    let wallet = Wallet::new(wif, &secp);
+    let wallet = Wallet::new(wif, wallet::WalletType::NativeSegwit, &secp);
     let txid = create_to_spend(message, &wallet);
     let to_sign = create_to_sign_empty(txid, &wallet);
     get_base64_signature(to_sign, &wallet, &secp)
+}
+pub fn simple_signature_with_wif_taproot(message: &str, wif: &str) -> String {
+    let secp = Secp256k1::new();
+    let wallet = Wallet::new(wif, wallet::WalletType::Taproot, &secp);
+    let txid = create_to_spend(message, &wallet);
+    let mut to_sign = create_to_sign_empty(txid, &wallet);
+    get_base64_signature_taproot(&mut to_sign, &wallet, &secp)
+}
+fn sign_psbt_taproot<C: Signing + Verification>(
+    secret_key: &secp256k1::SecretKey,
+    leaf_hash: Option<TapLeafHash>,
+    psbt_input: &mut psbt::Input,
+    hash: TapSighash,
+    secp: &Secp256k1<C>,
+) -> String {
+    let keypair = secp256k1::KeyPair::from_seckey_slice(secp, secret_key.as_ref()).unwrap();
+    let keypair = match leaf_hash {
+        None => keypair
+            .tap_tweak(secp, psbt_input.tap_merkle_root)
+            .to_inner(),
+        Some(_) => keypair, // no tweak for script spend
+    };
+    let sig = secp.sign_schnorr_no_aux_rand(
+        &Message::from_slice(hash.as_byte_array()).unwrap(),
+        &keypair,
+    );
+    let witness = vec![sig.as_ref().to_vec()];
+
+    let result: Vec<u8> = witness_to_vec(witness);
+    general_purpose::STANDARD.encode(result)
 }
 #[cfg(feature = "ffi")]
 mod ffi {
@@ -127,18 +190,36 @@ mod ffi {
 
     use libc::c_char;
 
-    use crate::simple_signature_with_wif;
+    use crate::{simple_signature_with_wif_segwit, simple_signature_with_wif_taproot};
 
     #[no_mangle]
-    pub extern "C" fn signature_with_wif(
+    pub extern "C" fn signature_with_wif_segwit(
         message: *const c_char,
         wif: *const c_char,
     ) -> *const c_char {
         let message_c_str = unsafe { CStr::from_ptr(message) };
         let wif_c_str = unsafe { CStr::from_ptr(wif) };
 
-        let ret_val =
-            simple_signature_with_wif(message_c_str.to_str().unwrap(), wif_c_str.to_str().unwrap());
+        let ret_val = simple_signature_with_wif_segwit(
+            message_c_str.to_str().unwrap(),
+            wif_c_str.to_str().unwrap(),
+        );
+        let ret_val_c_string = CString::new(ret_val).unwrap();
+        ret_val_c_string.into_raw()
+    }
+
+    #[no_mangle]
+    pub extern "C" fn signature_with_wif_taproot(
+        message: *const c_char,
+        wif: *const c_char,
+    ) -> *const c_char {
+        let message_c_str = unsafe { CStr::from_ptr(message) };
+        let wif_c_str = unsafe { CStr::from_ptr(wif) };
+
+        let ret_val = simple_signature_with_wif_taproot(
+            message_c_str.to_str().unwrap(),
+            wif_c_str.to_str().unwrap(),
+        );
         let ret_val_c_string = CString::new(ret_val).unwrap();
         ret_val_c_string.into_raw()
     }
@@ -152,6 +233,7 @@ mod tests {
         let secp = Secp256k1::new();
         let wallet = Wallet::new(
             "L3gn3CheHVnEJHApMjb6BuKdc45LzqChEebLMQaMh3V7cMh6qsaM",
+            wallet::WalletType::NativeSegwit,
             &secp,
         );
         assert_eq!(
@@ -165,6 +247,7 @@ mod tests {
         let secp = Secp256k1::new();
         let wallet = Wallet::new(
             "L3gn3CheHVnEJHApMjb6BuKdc45LzqChEebLMQaMh3V7cMh6qsaM",
+            wallet::WalletType::NativeSegwit,
             &secp,
         );
         let txid = create_to_spend("test", &wallet);
@@ -173,7 +256,27 @@ mod tests {
         assert_eq!(signature, "AkcwRAIgcS8lDfTl7UAytHbZI9BT74uTYqIuQHHUxlFOGGmT5Q8CIAclpi1G295lXeeRfDXdUWfdlkWdhv0S8XFP8rNFfvnDASEDviPnXh+H71VQrKuWCm2FYhSGV9TPO4XJTPhu3fwhhPM=")
     }
     #[test]
-    fn test_simple_sig() {
-        assert_eq!(simple_signature_with_wif("test", "L3gn3CheHVnEJHApMjb6BuKdc45LzqChEebLMQaMh3V7cMh6qsaM"), "AkcwRAIgcS8lDfTl7UAytHbZI9BT74uTYqIuQHHUxlFOGGmT5Q8CIAclpi1G295lXeeRfDXdUWfdlkWdhv0S8XFP8rNFfvnDASEDviPnXh+H71VQrKuWCm2FYhSGV9TPO4XJTPhu3fwhhPM=")
+    fn test_taproot_signature() {
+        let secp = Secp256k1::new();
+        let wallet = Wallet::new(
+            "L4F5BYm82Bck6VEY64EbqQkoBXqkegq9X9yc6iLTV3cyJoqUasnY",
+            wallet::WalletType::Taproot,
+            &secp,
+        );
+        let txid = create_to_spend(
+            "Sign this message to log in to https://www.subber.xyz // 200323342",
+            &wallet,
+        );
+        let mut to_sign = create_to_sign_empty(txid, &wallet);
+        let signature = get_base64_signature_taproot(&mut to_sign, &wallet, &secp);
+        assert_eq!(signature, "AUBxfbxG6dgW18nia1pfYVPB/OtzRImvqu5O2AvHwRmjmvRN5/bWbDDlMMfGlqJdRbqwUsxVAS/FfvbLJDE7MQFL")
+    }
+    #[test]
+    fn test_simple_sig_segwit() {
+        assert_eq!(simple_signature_with_wif_segwit("test", "L3gn3CheHVnEJHApMjb6BuKdc45LzqChEebLMQaMh3V7cMh6qsaM"), "AkcwRAIgcS8lDfTl7UAytHbZI9BT74uTYqIuQHHUxlFOGGmT5Q8CIAclpi1G295lXeeRfDXdUWfdlkWdhv0S8XFP8rNFfvnDASEDviPnXh+H71VQrKuWCm2FYhSGV9TPO4XJTPhu3fwhhPM=")
+    }
+    #[test]
+    fn test_simple_sig_taproot() {
+        assert_eq!(simple_signature_with_wif_taproot("Sign this message to log in to https://www.subber.xyz // 200323342", "L4F5BYm82Bck6VEY64EbqQkoBXqkegq9X9yc6iLTV3cyJoqUasnY"), "AUBxfbxG6dgW18nia1pfYVPB/OtzRImvqu5O2AvHwRmjmvRN5/bWbDDlMMfGlqJdRbqwUsxVAS/FfvbLJDE7MQFL")
     }
 }

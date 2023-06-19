@@ -3,12 +3,13 @@
 
 This tool is aiming to simplify message signing process on bitcoin. Simply pass private key in WIF format and message:
 ```
-simple_signature_with_wif(message: &str, wif: &str) -> &str
+simple_signature_with_wif_segwit(message: &str, wif: &str) -> &str
+simple_signature_with_wif_taproot(message: &str, wif: &str) -> &str
 ```
 
 
 
-Currently only Nested Segwit addresses are supported. Support for other address types will be added if there will be need for them.
+Currently only Nested Segwit and Taproot addresses are supported. Support for other address types will be added if there will be need for them.
 
 
 ## Installation
@@ -29,9 +30,14 @@ To compile to a static linked library. Clone the source and compile it with foll
 cargo build --features ffi --release
 ```
 
-Exported function has following signature:
+Exported functions have following signatures:
 ```
-pub extern "C" fn signature_with_wif(
+pub extern "C" fn signature_with_wif_segwit(
+        message: *const c_char,
+        wif: *const c_char,
+    ) -> *const c_char
+
+pub extern "C" fn signature_with_wif_taproot(
         message: *const c_char,
         wif: *const c_char,
     ) -> *const c_char
